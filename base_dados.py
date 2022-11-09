@@ -17,7 +17,7 @@ import pathlib
 import multiprocessing
 from urllib.parse import unquote
 print('[base_dados.py directory]: {path}'.format(path=pathlib.Path(__file__).parent.absolute()))
-# NÃO ADICIONAR MAIS IMPORTS!!!
+# Não adicionar mais imports!!
 
 
 class BaseSQL:
@@ -34,7 +34,7 @@ class BaseSQL:
 
     def conectar(self):
         nome_driver = '{SQL Server Native Client 11.0}'
-        if self.trust_conn:
+        if self.trust_conn:            
             conexao = pyodbc.connect(f"Driver={nome_driver};Server={self.nome_servidor};Database={self.nome_banco};Trusted_Connection=Yes;")
         else:
             conexao = pyodbc.connect(f"Driver={nome_driver};Server={self.nome_servidor};Database={self.nome_banco};Uid={self.usuario};Pwd={self.senha};")
@@ -139,7 +139,7 @@ class BaseSQL:
     # --------------------------------------	
     def executar_proc(self, codsql, argumentos):
         with self.conectar() as conexao:
-            cursor = self.conn.cursor()
+            cursor = conexao.cursor()
             cursor.callproc(codsql, argumentos)
 
     def dataframe(self, codsql):
@@ -150,12 +150,11 @@ class BaseSQL:
 
     def busca_valor(self, tabela, filtro, campo):
         codsql = f'SELECT {campo} FROM {tabela} WHERE {filtro}'
-        with self.conectar() as conexao:        
-            df = self.dataframe(codsql)
-            if len(df) > 0:
-                return df.iloc[0][campo]
-            else:
-                return None
+        df = self.dataframe(codsql)
+        if len(df) > 0:
+            return df.iloc[0][campo]
+        else:
+            return None
 
     def busca_todos_campos(self, tabela, filtro):
         codsql = f'SELECT * FROM {tabela} WHERE {filtro}'
