@@ -19,6 +19,7 @@ from urllib.parse import unquote
 print('[base_dados.py directory]: {path}'.format(path=pathlib.Path(__file__).parent.absolute()))
 # NÃO ADICIONAR MAIS IMPORTS!!!
 
+
 class BaseSQL:
 
     def __init__(self, nome_servidor, nome_banco, trust_conn=True, usuario=None, senha=None):
@@ -494,3 +495,18 @@ class BaseSQL:
         df_resultado['__Resultado__'] = lista_result
 
         return df_resultado
+
+    def busca_tabela(self, tabela, filtro=None, filtro_sec=None, string_ordem=None):
+        txt = ''
+        if filtro:
+            txt = f' WHERE {filtro}'
+        if filtro_sec:
+            if txt == '':
+                txt = f' WHERE {filtro_sec}'
+            else:
+                txt = f' {txt} AND ({filtro_sec})'
+        txt_ordem = ''
+        if string_ordem:
+            txt_ordem = f'ORDER BY {string_ordem}'
+        codsql = f"Select * FROM {tabela} {txt} {txt_ordem}"
+        return self.dataframe(codsql)
