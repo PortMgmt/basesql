@@ -42,8 +42,11 @@ class BaseSQL:
 
     # MÉTODOS ESTÁTICOS COMEÇAM AQUI
     # --------------------------------
-    @staticmethod
-    def sql_data(data, com_hora=False):
+    def sql_data(self, dia=None, com_hora=False):
+        if dia:
+            data = dia
+        else:
+            data = self.hoje()
 
         if type(data) is datetime.date:
             data = datetime.combine(data, datetime.min.time())
@@ -53,6 +56,12 @@ class BaseSQL:
             data = datetime.strptime(data, '%Y-%m-%d')
         apost = "'"
         return apost + str(data) + apost
+    
+    @staticmethod
+    def hoje():
+        data = datetime.now()
+        data = data.replace(hour=0, minute=0, second=0, microsecond=0)
+        return data
 
     @staticmethod
     def sql_var_converter(valor):
@@ -495,8 +504,9 @@ class BaseSQL:
 
         return df_resultado
 
-    def busca_tabela(self, tabela, filtro=None, filtro_sec=None, string_ordem=None):
-        txt = ''
+    def busca_tabela(self, tabela, filtro=None, filtro_sec=None, string_ordem=None, lista_campos=[]):
+        # Filtros
+        txt = ''        
         if filtro:
             txt = f' WHERE {filtro}'
         if filtro_sec:
@@ -504,8 +514,17 @@ class BaseSQL:
                 txt = f' WHERE {filtro_sec}'
             else:
                 txt = f' {txt} AND ({filtro_sec})'
+        # Cláusula Order BY
         txt_ordem = ''
         if string_ordem:
             txt_ordem = f'ORDER BY {string_ordem}'
-        codsql = f"Select * FROM {tabela} {txt} {txt_ordem}"
+
+        # Cláusula Select
+        if len(lista_campos) == 0:
+            txt_sel = '*'
+        else:
+            txt_sel = ','.join(lista_campos)
+        
+        # Query montada
+        codsql = f"Select {txt_sel} FROM {tabela} {txt} {txt_ordem}"
         return self.dataframe(codsql)
