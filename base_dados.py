@@ -31,6 +31,7 @@ class BaseSQL:
 
         self.ultima_tabela = None
         self.ultimo_df_type = pd.DataFrame()
+        self.table_df_list = []
 
     def conectar(self):
         nome_driver = '{SQL Server Native Client 11.0}'
@@ -55,7 +56,7 @@ class BaseSQL:
         elif type(data) is str and com_hora == False:
             data = datetime.strptime(data, '%Y-%m-%d')
         apost = "'"
-        return apost + str(data) + apost
+        return f"'{str(data)}'"
     
     @staticmethod
     def hoje():
@@ -195,9 +196,10 @@ class BaseSQL:
             try:
                 tipo = df_type['Data type'].loc[df_type['Column Name']==chave].iloc[0]
             except:
-                print(chave)
-                raise Exception
-            if tipo != 'float' and tabela != 'PR_DePara':
+                raise Exception(f'base_dados\sql_type_converter: Erro com a chave {chave}')
+            #if tipo == 'datetime':
+            #        campos_valores[chave] = self.sql_data(campos_valores[chave])
+            if tipo != 'float':
                 try:
                     campos_valores[chave] = int(campos_valores[chave])
                 except:
@@ -223,21 +225,31 @@ class BaseSQL:
         :return: True ou False - sucesso ou erro ao adicionar
         """
         campos_valores = self.sql_type_converter(tabela=tabela, campos_valores=campos_valores)
-        table_df = self.dataframe(codsql='''
-        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{tabela}'
-        '''.format(tabela=tabela))
-        table_df = table_df['COLUMN_NAME'].tolist()
+        
+        if len(self.table_df_list) != 0:
+            table_df = self.table_df_list
+        else:
+            table_df = self.dataframe(codsql='''
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{tabela}'
+            '''.format(tabela=tabela))
+            table_df = table_df['COLUMN_NAME'].tolist()
+        
+            
         if "quem" in table_df and "quem" not in campos_valores.keys():
             lista_user_date = self.get_user_and_date()
             campos_valores['quem'] = lista_user_date[0]
             campos_valores['quando'] = lista_user_date[1]
+        elif "Quem" in table_df and "Quem" not in campos_valores.keys():
+            lista_user_date = self.get_user_and_date()
+            campos_valores['Quem'] = lista_user_date[0]
+            campos_valores['Quando'] = lista_user_date[1]
 
         lista_interroga = []
         for item in campos_valores:  # incluído esse tratamento para conseguir adicionar valores nulos na tabela
             if campos_valores[item]:
-                lista_interroga.append('%s')
+                lista_interroga.append('?')
             else:
-                lista_interroga.append('%d')
+                lista_interroga.append('?')
         interrogas = str(tuple(lista_interroga)).replace("'", '')
         colunas = str(tuple(campos_valores.keys())).replace("'", '')
 
@@ -260,12 +272,11 @@ class BaseSQL:
                 cursor.close()
         except Exception as e:
             exc = str(e)
-
+        print(exc)
         return exc
 
     def com_add_df(self, tabela, df):
         # df = df.fillna(value='VALOR_NULO')
-        self.verifica_inicio()
         lista_result = []
         for i in range(0, len(df)):
             dic = df.iloc[i].to_dict()
