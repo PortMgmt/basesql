@@ -3,6 +3,9 @@ import pyodbc
 import numpy as np
 import os
 import datetime
+import math
+import pathlib
+import inspect
 import json
 import requests
 import locale
@@ -11,9 +14,7 @@ from dateutil.relativedelta import relativedelta
 from cryptography.fernet import Fernet
 import urllib
 import warnings
-import math
 import matplotlib.pyplot as plt
-import pathlib
 import multiprocessing
 from urllib.parse import unquote
 print('[base_dados.py directory]: {path}'.format(path=pathlib.Path(__file__).parent.absolute()))
@@ -34,6 +35,7 @@ class BaseSQL:
         self.table_df_list = []
 
     def conectar(self):
+        self.call_stack()
         nome_driver = '{SQL Server Native Client 11.0}'
         if self.trust_conn:            
             conexao = pyodbc.connect(f"Driver={nome_driver};Server={self.nome_servidor};Database={self.nome_banco};Trusted_Connection=Yes;")
@@ -147,6 +149,28 @@ class BaseSQL:
 
     # FUNÇÕES QUE CONECTAM NA BASE DE DADOS
     # --------------------------------------	
+    @staticmethod
+    def call_stack():
+        lista = inspect.stack()
+        arquivos = []
+        for l in lista:
+            caminho = l[1]
+            texto = caminho.split('\\')
+            arquivos.append(texto[len(texto)-1])
+        # print(arquivos)
+        # Detecta se base_dados.py foi chamada de maneira incorreta
+        conta_bd = 0
+        conta_db = 0
+        for arq in arquivos:
+            if arq == 'base_dados.py':
+                conta_bd += 1
+            elif arq == 'databases.py':
+                conta_db += 1
+            else:  # outro arquivo que não base_dados e databases
+                if conta_bd > 0 and conta_db == 0:
+                    # Significa que foi feita chamada sem passar pelo databases.py
+                    warnings.warn("Chamada de base de dados não intermediada pelo databases.py! Em breve isso será uma falha crítica! Revise seu código")
+                
     def executar_proc(self, codsql, argumentos):
         with self.conectar() as conexao:
             cursor = conexao.cursor()
@@ -165,10 +189,36 @@ class BaseSQL:
             return df.iloc[0][campo]
         else:
             return None
+    
+    def busca_valor_codsql(self, codsql, campo):
+        df = self.dataframe(codsql)
+        try:
+            valor = df.iloc[0][campo]
+        except:
+            valor = None
+        return valor
 
     def busca_todos_campos(self, tabela, filtro):
         codsql = f'SELECT * FROM {tabela} WHERE {filtro}'
         return self.dataframe(codsql)
+
+    def tabela_descricao(self, tabela):
+        cod_sql = '''SELECT DISTINCT
+                    c.name 'Column Name',
+                    t.Name 'Data type'
+                FROM   
+                    sys.columns c
+                INNER JOIN
+                    sys.types t ON c.user_type_id = t.user_type_id
+                LEFT OUTER JOIN
+                    sys.index_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                LEFT OUTER JOIN
+                    sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                WHERE
+                    c.object_id = OBJECT_ID('{tabela}')
+                        '''.format(tabela=tabela)
+        df_type = self.dataframe(cod_sql)
+        return df_type
 
     def sql_type_converter(self, tabela, campos_valores):
         if self.ultima_tabela != tabela:
@@ -288,6 +338,24 @@ class BaseSQL:
         # df_resultado.to_excel('Resultado_insert.xlsx')
         return df_resultado  # fazer qtidade de erros e retornar o df em outra fc
 
+    def com_add_lindf(self, tabela, linha_df):
+        dic = linha_df.to_dict()
+        return self.com_add(tabela, dic)
+
+    def conta_reg(self, codsql):
+        # TODO adicionar tratamento para PROCs (roda com EXEC)
+        codigo = codsql
+        # Vê se tem ORDER BY:
+        i = codigo.upper().find("ORDER BY")
+        if i != -1:
+            codigo = codigo[:i]
+        codigo = 'SELECT COUNT(*) AS CT FROM (' + codigo + ') TBL;'
+        conta = self.busca_valor_codsql(codigo, 'CT')
+        if conta:
+            return conta
+        else:
+            return 0
+
     def com_edit(self, tabela, filtro, campos_valores, campos_no_edit=None):
         """
         função que edita registros na tabela dado um filtro
@@ -328,7 +396,7 @@ class BaseSQL:
         """
         new_dic = campos_valores.copy()
         for chave in new_dic.keys():
-            new_dic[chave] = '%s'
+            new_dic[chave] = '?'
         colunas = str(new_dic).replace('{', '').replace('}', '').replace("'", '').replace(':', '=')
         valores = list(campos_valores.values())
         newlist = []
@@ -341,6 +409,8 @@ class BaseSQL:
         valores = (tuple(newlist))
 
         query = 'UPDATE {tabela} SET {colunas} WHERE {filtro}'.format(tabela=tabela, colunas=colunas, filtro=filtro)
+        # print(query)
+        # print(valores)
         with self.conectar() as conexao:
             cursor = conexao.cursor()
             exc = 'Sucesso'
@@ -370,7 +440,6 @@ class BaseSQL:
         :param colunas_comparar: quais colunas comparar antes de editar
         :return:
         '''
-        self.verifica_inicio()
         if type(campos_filtros) == list:
             campos_filtrar = campos_filtros
         else:
@@ -408,14 +477,15 @@ class BaseSQL:
                 if 'quando' not in dados.columns:
                     subir.insert(len(subir.columns), 'quando', [quemquando[1]] * len(subir))
             subir['quem'] = subir['quem'].astype(str)
-            subir['quando'] = subir['quando'].astype(str)
+            subir['quando'] = subir['quando'] #.astype(str)
 
         for i in range(0, len(tipos_de_valores)):
             if tipos_de_valores[i] == 'string':
                 subir[colunas[i]] = subir[colunas[i]].astype(str)
             elif tipos_de_valores[i] == 'datetime':
-                subir[colunas[i]] = subir[colunas[i]].apply(lambda x: datetime.strftime(x, '%Y-%m-%d 00:00:00.000'))
-                subir[colunas[i]] = subir[colunas[i]].astype(str)
+                pass
+                # subir[colunas[i]] = subir[colunas[i]].apply(lambda x: datetime.strftime(x, '%Y-%m-%d 00:00:00.000'))
+                # subir[colunas[i]] = subir[colunas[i]].astype(str)
             elif tipos_de_valores[i] == 'int':
                 subir[colunas[i]] = subir[colunas[i]].astype(int)
             else:
