@@ -6,17 +6,7 @@ import datetime
 import math
 import pathlib
 import inspect
-import json
-import requests
-import locale
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-from cryptography.fernet import Fernet
-import urllib
-import warnings
-import matplotlib.pyplot as plt
-import multiprocessing
-from urllib.parse import unquote
+import socket
 print('[base_dados.py directory]: {path}'.format(path=pathlib.Path(__file__).parent.absolute()))
 # Não adicionar mais imports!!
 
@@ -30,17 +20,67 @@ class BaseSQL:
         self.usuario = usuario
         self.senha = senha
 
+        if not self.__testa_servidor__():
+            # Conexão falhou
+            # Testa substituir .gps.br por vazio
+            novo_nome = nome_servidor.lower().replace('.gps.br', '')
+            if self.__testa_servidor__(novo_nome):
+                self.nome_servidor = novo_nome
+            else:
+                texto = f'BaseSQL: não foi possível se conectar ao servidor {nome_servidor}'
+                raise Exception(texto)
+
+        self.nome_driver = 'SQL Server Native Client 11.0'
+        self.nome_driver = self.__testa_driver__()      
+
         self.ultima_tabela = None
         self.ultimo_df_type = pd.DataFrame()
         self.table_df_list = []
-
-    def conectar(self):
-        self.call_stack()
-        nome_driver = '{SQL Server Native Client 11.0}'
-        if self.trust_conn:            
-            conexao = pyodbc.connect(f"Driver={nome_driver};Server={self.nome_servidor};Database={self.nome_banco};Trusted_Connection=Yes;")
+        
+    def __testa_servidor__(self, nome_servidor=None):
+        if nome_servidor:
+            servidor = nome_servidor
         else:
-            conexao = pyodbc.connect(f"Driver={nome_driver};Server={self.nome_servidor};Database={self.nome_banco};Uid={self.usuario};Pwd={self.senha};")
+            servidor = self.nome_servidor
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = 1
+        try:
+            result = sock.connect_ex((servidor, 1433))
+        except:
+            result = 1
+        if result == 0:
+            return True
+        else:
+            return False
+    
+    def __testa_driver__(self):
+        drivers = pyodbc.drivers()
+        if self.nome_driver in drivers:
+            return self.nome_driver
+        else:
+            for nome in drivers:
+                if 'sql server' in nome.lower():
+                    try:
+                        conexao = self.conectar(nome_driver=nome)
+                        teste = True
+                    except:
+                        teste = False
+                    if teste:
+                        return nome
+        texto = 'BaseSQL: não foi possível encontrar um driver do SQL Server'
+        raise Exception(texto)     
+
+    def conectar(self, nome_driver=None):
+        self.call_stack()
+        if nome_driver:
+            meu_driver = "{" + nome_driver + "}"
+        else:
+            meu_driver = "{" + self.nome_driver + "}"
+        
+        if self.trust_conn:            
+            conexao = pyodbc.connect(f"Driver={meu_driver};Server={self.nome_servidor};Database={self.nome_banco};Trusted_Connection=Yes;")
+        else:
+            conexao = pyodbc.connect(f"Driver={meu_driver};Server={self.nome_servidor};Database={self.nome_banco};Uid={self.usuario};Pwd={self.senha};")
         return conexao
 
     # MÉTODOS ESTÁTICOS COMEÇAM AQUI
@@ -164,17 +204,29 @@ class BaseSQL:
         for arq in arquivos:
             if arq == 'base_dados.py':
                 conta_bd += 1
-            elif arq == 'databases.py':
+            elif arq == 'databases.py' or arq == 'databases_risk.py':
                 conta_db += 1
             else:  # outro arquivo que não base_dados e databases
                 if conta_bd > 0 and conta_db == 0:
                     # Significa que foi feita chamada sem passar pelo databases.py
-                    warnings.warn("Chamada de base de dados não intermediada pelo databases.py! Em breve isso será uma falha crítica! Revise seu código")
+                    raise Warning("Falha crítica: chamada de base de dados não intermediada pelo databases.py! Revise seu código")
                 
     def executar_proc(self, codsql, argumentos):
         with self.conectar() as conexao:
             cursor = conexao.cursor()
             cursor.callproc(codsql, argumentos)
+            
+    def executar_comando(self, codsql):
+        with self.conectar() as conexao:
+            cursor = conexao.cursor()
+            exc = 'Sucesso'
+            try:
+                cursor.execute(codsql)
+            except Exception as e:
+                exc = str(e)
+            conexao.commit()
+            cursor.close()
+        return exc
 
     def dataframe(self, codsql):
         df = pd.DataFrame()
@@ -356,24 +408,41 @@ class BaseSQL:
         else:
             return 0
 
-    def com_edit(self, tabela, filtro, campos_valores, campos_no_edit=None):
+    def com_edit(self, tabela, filtro, campos_valores, campos_no_edit=None, campo_quem=None, campo_quando=None):
         """
         função que edita registros na tabela dado um filtro
         :param tabela:
         :param filtro: filtro para identificar os registros
-        :param campos_valores: texto em formato campo;valor;campo1;valor1;campo2;valor2....
+        :param campos_valores: dicionário com campos e valores
         :param campos_no_edit: campos que não devem ser alterados (chave primária e índices, por exemplo)
+        :param campo_quem: qual o campo onde deve ser colocada informação de quem alterou
+        :param campo_quando: qual o campo onde deve ser colocada informação de quando foi a alteração
         :return:  Se sucesso retorna 'Sucesso'. Se erro retorna o erro como string.
         """
         campos_valores = self.sql_type_converter(tabela=tabela, campos_valores=campos_valores)
-        table_df = self.dataframe(codsql='''
-        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{tabela}'
-        '''.format(tabela=tabela))
-        table_df = table_df['COLUMN_NAME'].tolist()
-        if "quem" in table_df and "quem" not in campos_valores.keys():
+        if len(self.table_df_list) != 0:
+            table_df = self.table_df_list
+        else:
+            table_df = self.dataframe(codsql='''
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{tabela}'
+            '''.format(tabela=tabela))
+            table_df = table_df['COLUMN_NAME'].tolist()
+        
+        if campo_quem and campo_quando:
             lista_user_date = self.get_user_and_date()
-            campos_valores['quem'] = lista_user_date[0]
-            campos_valores['quando'] = lista_user_date[1]
+            if campo_quem in table_df and campo_quem not in campos_valores.keys():
+                campos_valores[campo_quem] = lista_user_date[0]
+            if campo_quando in table_df and campo_quando not in campos_valores.keys():
+                campos_valores[campo_quando] = lista_user_date[1]
+        else:
+            if "quem" in table_df and "quem" not in campos_valores.keys():
+                lista_user_date = self.get_user_and_date()
+                campos_valores['quem'] = lista_user_date[0]
+                campos_valores['quando'] = lista_user_date[1]
+            if "Who" in table_df and "Who" not in campos_valores.keys():
+                lista_user_date = self.get_user_and_date()
+                campos_valores['[Who]'] = lista_user_date[0]
+                campos_valores['[When]'] = lista_user_date[1]
 
         if type(campos_no_edit) is str:
             try:
@@ -473,11 +542,17 @@ class BaseSQL:
             if 'quem' in df_type.index:
                 if 'quem' not in dados.columns:
                     subir.insert(len(subir.columns), 'quem', [quemquando[0]] * len(subir))
+                    subir['quem'] = subir['quem'].astype(str)
             if 'quando' in df_type.index:
                 if 'quando' not in dados.columns:
                     subir.insert(len(subir.columns), 'quando', [quemquando[1]] * len(subir))
-            subir['quem'] = subir['quem'].astype(str)
-            subir['quando'] = subir['quando'] #.astype(str)
+            if 'Who' in df_type.index:
+                if 'Who' not in dados.columns:
+                    subir.insert(len(subir.columns), '[Who]', [quemquando[0]] * len(subir))
+                    subir['[Who]'] = subir['[Who]'].astype(str)
+            if 'When' in df_type.index:
+                if 'When' not in dados.columns:
+                    subir.insert(len(subir.columns), '[When]', [quemquando[1]] * len(subir))
 
         for i in range(0, len(tipos_de_valores)):
             if tipos_de_valores[i] == 'string':
