@@ -82,6 +82,14 @@ class EmailLer:
         inbox = mapi.GetDefaultFolder(self.numero_pasta_outlook).Folders[self.nome_sub_pasta]
         messages = inbox.Items
         print('Processando ', len(messages), 'emails')
+        
+    def busca_anexo_xlsx(self, assunto_busca, data_base, pasta_destino, nome_destino, extensao_arquivo='.xlsx', case_sensitive=False):
+        outlook = client.Dispatch('outlook.application')
+        mapi = outlook.GetNamespace("MAPI")
+        inbox = mapi.GetDefaultFolder(self.numero_pasta_outlook).Folders[self.nome_sub_pasta]
+        messages = inbox.Items
+        print('Processando ', len(messages), 'emails')   
+        
 
         achei_arquivo = False
         lista_salvos = []
